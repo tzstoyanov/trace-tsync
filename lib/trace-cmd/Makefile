@@ -17,6 +17,7 @@ OBJS += trace-filter-hash.o
 OBJS += trace-msg.o
 OBJS += trace-plugin.o
 OBJS += trace-timesync.o
+OBJS += trace-timesync-ptp.o
 
 # Additional util objects
 OBJS += trace-blk-hack.o
