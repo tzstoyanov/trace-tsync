@@ -96,8 +96,9 @@ struct guest_trace_info {
 };
 
 struct host_trace_info {
-	unsigned long long	trace_id;
+	unsigned long long	peer_trace_id;
 	bool			sync_enable;
+	struct tracecmd_input	*peer_data;
 	int			cpu_count;
 	struct ts_offset_cpu	*cpu_time_offsets;
 };
@@ -2225,10 +2226,33 @@ error:
 	return -1;
 }
 
+static void tsync_check_enable(struct tracecmd_input *handle)
+{
+	struct host_trace_info	*host = &handle->host;
+	struct guest_trace_info *guest;
+
+	host->sync_enable = false;
+
+	if (!host->peer_data || !host->peer_data->guest ||
+	    !host->cpu_count || !host->cpu_time_offsets)
+		return;
+	if (host->peer_trace_id != host->peer_data->trace_id)
+		return;
+	guest = host->peer_data->guest;
+	while (guest) {
+		if (guest->trace_id == handle->trace_id)
+			break;
+		guest = guest->next;
+	}
+	if (!guest)
+		return;
+
+	host->sync_enable = true;
+}
+
 static int tsync_offset_load(struct tracecmd_input *handle,
 			      char *buf, int buf_size, int cpus)
 {
-	struct host_trace_info *host = &handle->host;
 	int count, cpu;
 	int ret;
 	int i;
@@ -2257,8 +2281,6 @@ static int tsync_offset_load(struct tracecmd_input *handle,
 		buf += ret;
 	}
 
-	if (host->cpu_count)
-		host->sync_enable = true;
 	return 0;
 }
 
@@ -2272,6 +2294,11 @@ static void trace_tsync_offset_free(struct host_trace_info *host)
 	free(host->cpu_time_offsets);
 	host->cpu_time_offsets = NULL;
 	host->cpu_count = 0;
+
+	if (host->peer_data) {
+		tracecmd_close(host->peer_data);
+		host->peer_data = NULL;
+	}
 }
 
 static int trace_pid_map_cmp(const void *a, const void *b)
@@ -2585,8 +2612,8 @@ static int handle_options(struct tracecmd_input *handle)
 			 */
 			if (size < 12 || handle->flags & TRACECMD_FL_IGNORE_DATE)
 				break;
-			handle->host.trace_id = tep_read_number(handle->pevent,
-								buf, 8);
+			handle->host.peer_trace_id = tep_read_number(handle->pevent,
+								     buf, 8);
 			cpus = tep_read_number(handle->pevent, buf + 8, 4);
 			tsync_offset_load(handle, buf + 12, size - 12, cpus);
 			break;
@@ -2658,6 +2685,8 @@ static int handle_options(struct tracecmd_input *handle)
 	}
 
 	handle->cpustats = cpustats;
+
+	tsync_check_enable(handle);
 
 	return 0;
 }
@@ -3192,11 +3221,8 @@ struct tracecmd_input *tracecmd_alloc(const char *file)
 	return tracecmd_alloc_fd(fd);
 }
 
-/**
- * tracecmd_open_fd - create a tracecmd_handle from the trace.dat file descriptor
- * @fd: the file descriptor for the trace.dat file
- */
-struct tracecmd_input *tracecmd_open_fd(int fd)
+static struct tracecmd_input *tracecmd_open_fd_ext(int fd,
+						   struct tracecmd_input *merge)
 {
 	struct tracecmd_input *handle;
 	int ret;
@@ -3204,7 +3230,7 @@ struct tracecmd_input *tracecmd_open_fd(int fd)
 	handle = tracecmd_alloc_fd(fd);
 	if (!handle)
 		return NULL;
-
+	handle->host.peer_data = merge;
 	if (tracecmd_read_headers(handle) < 0)
 		goto fail;
 
@@ -3219,6 +3245,15 @@ fail:
 }
 
 /**
+ * tracecmd_open_fd - create a tracecmd_handle from the trace.dat file descriptor
+ * @fd: the file descriptor for the trace.dat file
+ */
+struct tracecmd_input *tracecmd_open_fd(int fd)
+{
+	return tracecmd_open_fd_ext(fd, NULL);
+}
+
+/**
  * tracecmd_open - create a tracecmd_handle from a given file
  * @file: the file name of the file that is of tracecmd data type.
  */
@@ -3230,7 +3265,33 @@ struct tracecmd_input *tracecmd_open(const char *file)
 	if (fd < 0)
 		return NULL;
 
-	return tracecmd_open_fd(fd);
+	return tracecmd_open_fd_ext(fd, NULL);
+}
+
+/**
+ * tracecmd_open_merge - create a tracecmd_handle from a given file and
+ * @file: the file name of the file that is of tracecmd data type.
+ */
+struct tracecmd_input *tracecmd_open_merge(const char *file,
+					   const char *primary_file)
+{
+	struct tracecmd_input *primary = NULL;
+	int fd;
+
+	if (!primary_file)
+		return tracecmd_open(file);
+
+	fd = open(file, O_RDONLY);
+	if (fd < 0)
+		return NULL;
+
+	primary = tracecmd_open(primary_file);
+	if (!primary) {
+		close(fd);
+		return NULL;
+	}
+
+	return tracecmd_open_fd_ext(fd, primary);
 }
 
 /**
@@ -3812,7 +3873,7 @@ int tracecmd_get_guest_cpumap(struct tracecmd_input *handle,
  */
 unsigned long long tracecmd_get_tsync_peer(struct tracecmd_input *handle)
 {
-	return handle->host.trace_id;
+	return handle->host.peer_trace_id;
 }
 
 /**
