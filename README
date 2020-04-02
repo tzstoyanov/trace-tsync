@@ -5,12 +5,16 @@ Note: The official repositiory for trace-cmd and KernelShark is here:
 This is a fork of the original trace-cmd repository with added few patches for timestamp synchronization using a PTP-like algorithm.
 The changes are in the vs12 branch.
 
+Commands, used for testing:
+guest-debian# trace-cmd agent
+host# trace-cmd record -e sched -e kvm -C mono_raw -A Debian -e all
+
 These compile time defines and flags can be used to switch between different timestamp synchronization algorithms:
 
 1. In file tracecmd/trace-tsync.c: 
   #define TSYNC_PER_CPU
   
-  When TSYNC_PER_CPU is defined, the synchronization is performed per each host CPU core, according to the CPU affinity of host tasks, running each guest VCPU. The command "trace-cmd dump --options trace-guest.dat" can be used to see what offsets are measured and saved in the trace file.
+  When TSYNC_PER_CPU is defined, the synchronization is performed per each host CPU core, according to the CPU affinity of host tasks, running each guest VCPU. The command "trace-cmd dump --options trace-guest.dat" can be used to see what offsets are measured and saved in the trace file. The "-e sched" events must be recorded in the host trace file in this case, as infomratoin for migration of host tasks, running VCPUs, is mandatory when host anf guest files are merged.
   In the per CPU case:
   #./tracecmd/trace-cmd dump --options trace-guest.dat
               ....
