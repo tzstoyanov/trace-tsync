@@ -1,6 +1,82 @@
 Note: The official repositiory for trace-cmd and KernelShark is here:
  git://git.kernel.org/pub/scm/utils/trace-cmd/trace-cmd.git
 
-This is a fork of the original trace-cmd repositiory with added few patches for timestamps synhronization using a PTP-like algorithm. The changes are in vs12 branch.
+This is a fork of the original trace-cmd repository with added few patches for timestamp synchronization using a PTP-like algorithm.
+The changes are in the vs12 branch.
+
+These compile time defines and flags can be used to switch between different timestamp synchronization algorithms:
+
+1. In file tracecmd/trace-tsync.c: 
+  #define TSYNC_PER_CPU
+  
+  When TSYNC_PER_CPU is defined, the synchronization is performed per each host CPU core, according to the CPU affinity of host tasks, running each guest VCPU. The command "trace-cmd dump --options trace-guest.dat" can be used to see what offsets are measured and saved in the trace file.
+  In the per CPU case:
+  #./tracecmd/trace-cmd dump --options trace-guest.dat
+              ....
+  		[Option TimeShift, 332 bytes]
+0x48102C0B4F29DCA3 [peer's trace id]
+8 [CPU count]
+ 0 [cpu id]
+ 2 [samples count]
+	83618290389336 115585865148945 [offset @ time]
+	83618290386396 115588497765158 [offset @ time]
+ 1 [cpu id]
+ 2 [samples count]
+	83618290390787 115585963757354 [offset @ time]
+	83618290400667 115588608534684 [offset @ time]
+ 2 [cpu id]
+ 2 [samples count]
+	83618290394591 115586063698352 [offset @ time]
+	83618290392500 115588685522261 [offset @ time]
+ 3 [cpu id]
+ 2 [samples count]
+	83618290364513 115586132824349 [offset @ time]
+	83618290399770 115588812980087 [offset @ time]
+ 4 [cpu id]
+ 2 [samples count]
+	83618290359052 115586259321189 [offset @ time]
+	83618290386048 115588902430963 [offset @ time]
+ 5 [cpu id]
+ 2 [samples count]
+	83618290368877 115586331103939 [offset @ time]
+	83618290391715 115589019215194 [offset @ time]
+ 6 [cpu id]
+ 2 [samples count]
+	83618290370605 115586459338068 [offset @ time]
+	83618290369963 115589084891389 [offset @ time]
+ 7 [cpu id]
+ 2 [samples count]
+	83618290366282 115586635275600 [offset @ time]
+	83618290386206 115589223275780 [offset @ time]
+              ....
 
 
+  In the single CPU case:
+  #./tracecmd/trace-cmd dump --options trace-guest.dat
+              ....
+  		[Option TimeShift, 52 bytes]
+0xF4BA9D67C82D7D [peer's trace id]
+1 [CPU count]
+ -1 [cpu id]
+ 2 [samples count]
+	83618290375331 109300709274646 [offset @ time]
+	83618290385849 109306457764646 [offset @ time]
+              ....
+
+  
+2. Tunning the PTP-like timestamp synchronization algorithm. In file lib/trace-cmd/trace-timesync-ptp.c:
+  static int ptp_flags = ...
+  any combinations of flags PTP_FLAG_FASTEST_RESPONSE and PTP_FLAG_USE_MARKER
+ - PTP_FLAG_FASTEST_RESPONSE: When set, use only the probe with the fastest response time is used. If the flag is not set, a histogram from the all probes is calculated and its peak is used.
+  - PTP_FLAG_USE_MARKER: Use ftrace markers to get the clock: write the marker and look up for its timestamp. If the flag is not set, the clock_gettime(CLOCK_MONOTONIC_RAW, ...) API. In this case, the "-C mono_raw" option must be used when recording the traces.
+  
+  3. Gather timesync debug data for offline analysis. In file lib/trace-cmd/trace-timesync-ptp.c:
+  #define TSYNC_DEBUG
+  
+  When defined, text files with all timestamps synchronization probes are recorded in the guest context, one file per each calculation. The file name pattern is s-cid<guest CID>_<count>.txt. A file with all calculations is also recorded: res-cid<guest CID>.txt
+  These files can be analyzed and  visualized  with debug scripts in scripts/debug/ :
+    python tsync_hist.py s-cid<guest CID>_<count>.txt: draw a histogram of all samples from the file and plot a red line with selected offset.
+     python tsync_res.py res-cid<guest CID>.txt: draw a line of all calculated  offsets.
+  
+  
+     
